@@ -670,6 +670,40 @@ func TestImportParsers(t *testing.T) {
 			t.Fatalf("a line that only looks like a header was mangled: %q", got[2].Cmd)
 		}
 	})
+	t.Run("zsh metafied bytes", func(t *testing.T) {
+		// zsh writes the history file metafied and nothing in the file says so.
+		// The escape covers Meta, NUL and the token range above Meta, so one
+		// Japanese path picks up several shapes at once: U+30C3 (e3 83 83)
+		// needs two escapes, and U+30C8 (e3 83 88) needs one for a byte that is
+		// not Meta itself. The rule below was checked against what zsh actually
+		// wrote for this string.
+		metafy := func(s string) []byte {
+			var out []byte
+			for _, b := range []byte(s) {
+				if b == 0 || b == 0x83 || (b >= 0x84 && b <= 0x9e) || b == 0xa0 {
+					out = append(out, 0x83, b^32)
+					continue
+				}
+				out = append(out, b)
+			}
+			return out
+		}
+		const want = "mv スクリーンショット.png ."
+		src := filepath.Join(h.dir, "zh-meta")
+		os.WriteFile(src, append(append([]byte(": 1700000200:0;"), metafy(want)...), '\n'), 0o600)
+		got := parseZsh(mustRead(t, src), "imported")
+		if len(got) != 1 {
+			t.Fatalf("got %d records: %+v", len(got), got)
+		}
+		if got[0].Cmd != want {
+			t.Fatalf("metafied command not decoded:\n got %q\nwant %q", got[0].Cmd, want)
+		}
+		// A file truncated in the middle of an escape keeps the trailing byte
+		// rather than dropping it or reading past the end.
+		if got := parseZsh([]byte("echo \x83"), "imported"); len(got) != 1 || got[0].Cmd != "echo \x83" {
+			t.Fatalf("truncated escape: %+v", got)
+		}
+	})
 	t.Run("fish", func(t *testing.T) {
 		src := filepath.Join(h.dir, "fh")
 		os.WriteFile(src, []byte("- cmd: git status\n  when: 1700000300\n  paths:\n    - a\n- cmd: two\\nlines\n  when: 1700000400\n"), 0o600)
