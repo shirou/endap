@@ -672,23 +672,27 @@ func TestImportParsers(t *testing.T) {
 	})
 	t.Run("zsh metafied bytes", func(t *testing.T) {
 		// zsh writes the history file metafied and nothing in the file says so.
-		// The escape covers Meta, NUL and the token range above Meta, so one
-		// Japanese path picks up several shapes at once: U+30C3 (e3 83 83)
-		// needs two escapes, and U+30C8 (e3 83 88) needs one for a byte that is
-		// not Meta itself. The rule below was checked against what zsh actually
-		// wrote for this string.
+		// The escape covers NUL and all of 0x83-0xa2, and this string spans the
+		// shapes that come out of that: U+30C3 (e3 83 83) escapes twice,
+		// U+30C8 (e3 83 88) escapes a token-range byte on top of its Meta byte,
+		// and U+30E2 (e3 83 a2) sits on the top of the range.
+		//
+		// metafy is not derived from unmetafyZsh -- it produces, byte for byte,
+		// what zsh itself wrote when asked to save this exact string. That is
+		// what stops the round trip from passing on a rule both halves get
+		// wrong: with the range one byte too narrow the two stop agreeing.
 		metafy := func(s string) []byte {
 			var out []byte
 			for _, b := range []byte(s) {
-				if b == 0 || b == 0x83 || (b >= 0x84 && b <= 0x9e) || b == 0xa0 {
-					out = append(out, 0x83, b^32)
+				if b == 0 || (b >= zshMeta && b <= 0xa2) {
+					out = append(out, zshMeta, b^32)
 					continue
 				}
 				out = append(out, b)
 			}
 			return out
 		}
-		const want = "mv スクリーンショット.png ."
+		const want = "mv スクリーンショット.png メモ/"
 		src := filepath.Join(h.dir, "zh-meta")
 		os.WriteFile(src, append(append([]byte(": 1700000200:0;"), metafy(want)...), '\n'), 0o600)
 		got := parseZsh(mustRead(t, src), "imported")

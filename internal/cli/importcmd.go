@@ -222,10 +222,11 @@ func parseBash(data []byte, host string) []record.Record {
 
 // zshMeta is zsh's Meta byte.
 //
-// zsh writes the history file in metafied form: a byte it treats as special --
-// Meta itself, NUL, and the token range 0x84-0x9e above it -- is stored as Meta
+// zsh writes the history file in metafied form: NUL, and every byte in
+// 0x83-0xa2 -- Meta itself and the token range above it -- is stored as Meta
 // followed by that byte XORed with 32. Nothing in the file marks a line as
-// escaped.
+// escaped. The range is what zsh was measured to do, by having it save one
+// entry holding every byte and reading back what it wrote.
 const zshMeta = 0x83
 
 // unmetafyZsh undoes that escaping.
@@ -237,9 +238,14 @@ const zshMeta = 0x83
 // damaged -- only a reader that takes its bytes at face value is.
 //
 // Undoing it before the file is split into lines is safe: the second byte of an
-// escape is always 0x20, 0x80, or 0xa3-0xbe, so an escape can neither hide a
+// escape is always 0x20, 0x80-0x82 or 0xa3-0xbf, so an escape can neither hide a
 // newline nor hide the backslash joinContinuations looks for, and unmetafying
 // cannot produce one either.
+//
+// The input is taken to be what zsh wrote, which is always metafied -- a 0x83
+// there is an escape and never data. Handing `import zsh --file` a plain UTF-8
+// file instead damages the non-ASCII text in it, which is the price of not
+// having to guess which of the two a file is.
 func unmetafyZsh(b []byte) []byte {
 	i := bytes.IndexByte(b, zshMeta)
 	if i < 0 {
