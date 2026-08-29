@@ -23,10 +23,17 @@ import (
 // editor. Ctrl-R is the tty's own "reprint" character, so anything typed while
 // the shell is busy is swallowed by the line discipline before zsh sees it.
 // Hence script(1) for the pty, and a pause between keystrokes.
-func typeInto(t *testing.T, shell, zdotdir string, keys []string) {
+func typeIntoZsh(t *testing.T, zdotdir string, keys []string) {
 	t.Helper()
 	scriptBin := ptyHarness(t)
-	cmd := exec.Command(scriptBin, "-qec", shell+" -i", "/dev/null")
+	// -d skips the global rc files. Ubuntu's /etc/zsh/zshrc runs compinit, and
+	// where $fpath holds a group-writable directory -- it does on the GitHub
+	// runners -- compinit stops to ask "Ignore insecure directories and
+	// continue [y] or abort compinit [n]?". That read happens before the line
+	// editor is up and swallows the first key the test types, so the typed text
+	// arrives one character short. What is under test is endap's own init
+	// snippet, not the distribution's.
+	cmd := exec.Command(scriptBin, "-qec", "zsh -d -i", "/dev/null")
 	cmd.Dir = zdotdir
 	cmd.Env = append(os.Environ(), "ZDOTDIR="+zdotdir, "HOME="+zdotdir, "TERM=xterm")
 	stdin, err := cmd.StdinPipe()
@@ -187,7 +194,7 @@ func TestCtrlRWidget(t *testing.T) {
 	// is where it would show.
 	const selection = "echo picked-one\necho picked-two"
 	zdotdir, dataDir := setupWidget(t, selection)
-	typeInto(t, "zsh", zdotdir, []string{"echo seed\n", "\x12", "\n", "exit\n"})
+	typeIntoZsh(t, zdotdir, []string{"echo seed\n", "\x12", "\n", "exit\n"})
 
 	recs := readLog(t, dataDir)
 	var got []string
@@ -239,7 +246,7 @@ func TestCtrlRWidgetUsesTheTypedTextAsTheQuery(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".zshrc"), []byte(rc), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	typeInto(t, "zsh", dir, []string{"git sta", "\x12", "\n", "exit\n"})
+	typeIntoZsh(t, dir, []string{"git sta", "\x12", "\n", "exit\n"})
 
 	got, err := os.ReadFile(queryFile)
 	if err != nil {
