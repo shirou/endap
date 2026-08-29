@@ -147,6 +147,23 @@ after the file has grown adds only the new part. Run counts survive, which the
 simpler "skip anything already present" rule would have destroyed for a
 timestamp-free `~/.bash_history`.
 
+Idempotency holds within one version of the parser, and the zsh one changed
+once. Earlier versions read the history file without undoing zsh's metafication,
+so every non-ASCII command came in mangled. Those records do not match what the
+current parser produces, so a fresh `endap import zsh` adds the decoded copy
+*beside* the mangled one rather than deduplicating against it. If your log has
+commands that came in through an older `import zsh`:
+
+```sh
+endap forget '\x{fffd}'          # dry run; prints record ids, not the commands
+endap forget '\x{fffd}' --yes    # then delete them
+endap import zsh                 # and take them in again, decoded this time
+```
+
+The pattern matches the replacement character the mangled bytes turned into. A
+real command containing U+FFFD would go with them; `--show-matches` prints what
+would.
+
 The ignore list (below) applies to imports. This is where it matters most: a
 `~/.bash_history` is where years of accidentally-typed secrets live, and an
 import is the one moment they would all be copied in at once.

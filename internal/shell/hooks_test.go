@@ -62,12 +62,60 @@ func endap(t *testing.T) string {
 	return bin
 }
 
+// guardMarker is what the histfile guards below type. It has to be a string no
+// other test would run, so that finding it in a file is proof and not chance.
+const guardMarker = "echo endap-histfile-guard"
+
+// inheritedHistfile sets up the environment of a machine that exports HISTFILE
+// -- which is most of them -- and returns the check to run once the shell has
+// exited.
+//
+// Driving a real shell means inheriting that environment, and redirecting HOME
+// does not cover an absolute HISTFILE. A launcher that forgets to redirect it
+// saves what the test typed into the developer's own history. Nothing catches
+// that on its own: CI has no HISTFILE to inherit and stays green, so the damage
+// lands on one machine and surfaces only later, once an `endap import` has
+// copied the test's commands into the log. These guards go red first instead.
+func inheritedHistfile(t *testing.T) func() {
+	t.Helper()
+	decoy := filepath.Join(t.TempDir(), "inherited_history")
+	if err := os.WriteFile(decoy, []byte("# a history file no test may write to\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HISTFILE", decoy)
+	// zsh saves nothing at all unless SAVEHIST is set, and an environment that
+	// exports HISTFILE normally exports these two beside it.
+	t.Setenv("SAVEHIST", "1000")
+	t.Setenv("HISTSIZE", "1000")
+	return func() {
+		t.Helper()
+		saved, err := os.ReadFile(decoy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(saved), guardMarker) {
+			t.Fatalf("the test shell wrote into the inherited HISTFILE:\n%s", saved)
+		}
+	}
+}
+
+func TestRunShellLeavesTheInheritedHistfileAlone(t *testing.T) {
+	check := inheritedHistfile(t)
+	runShell(t, "zsh", "", guardMarker+"\n")
+	check()
+}
+
 // runShell starts an interactive shell with its own dot files and feeds it
 // input.
 //
 // ZDOTDIR and HOME are redirected on purpose. Without that the user's own
 // ~/.zshrc is read, and its atuin bindings, fzf widgets and preexec hooks end
 // up inside the test.
+//
+// HISTFILE has to be redirected too, and redirecting HOME does not cover it: it
+// is usually exported as an absolute path, so the test shell inherits it along
+// with SAVEHIST and, on exit, writes every command this test types into the
+// user's real shell history -- where a later `endap import` picks them up.
 func runShell(t *testing.T, shell, rc, input string) *shellRun {
 	t.Helper()
 	bin := endap(t)
@@ -101,6 +149,7 @@ func runShell(t *testing.T, shell, rc, input string) *shellRun {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
 		"ZDOTDIR="+dir, "HOME="+dir,
+		"HISTFILE="+filepath.Join(dir, "shell_history"),
 		"PATH="+filepath.Dir(bin)+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"ENDAP_DATA_DIR="+dataDir,
 	)

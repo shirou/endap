@@ -220,10 +220,58 @@ func parseBash(data []byte, host string) []record.Record {
 	return out
 }
 
-// zshExtended matches the extended history header ": <ts>:<elapsed>;".
+// zshMeta is zsh's Meta byte.
+//
+// zsh writes the history file in metafied form: NUL, and every byte in
+// 0x83-0xa2 -- Meta itself and the token range above it -- is stored as Meta
+// followed by that byte XORed with 32. Nothing in the file marks a line as
+// escaped. The range is what zsh was measured to do, by having it save one
+// entry holding every byte and reading back what it wrote.
+const zshMeta = 0x83
+
+// unmetafyZsh undoes that escaping.
+//
+// Skipping it corrupts every command holding a character whose UTF-8 contains
+// one of those bytes, which is most non-ASCII text: U+30EA is e3 83 aa in UTF-8,
+// reaches the file as e3 83 a3 aa, and read literally comes back as U+30E3
+// followed by a stray byte. zsh unmetafies on the way in, so the file is not
+// damaged -- only a reader that takes its bytes at face value is.
+//
+// Undoing it before the file is split into lines is safe: the second byte of an
+// escape is always 0x20, 0x80-0x82 or 0xa3-0xbf, so an escape can neither hide a
+// newline nor hide the backslash joinContinuations looks for, and unmetafying
+// cannot produce one either.
+//
+// The input is taken to be what zsh wrote, which is always metafied -- a 0x83
+// there is an escape and never data. Handing `import zsh --file` a plain UTF-8
+// file instead damages the non-ASCII text in it, which is the price of not
+// having to guess which of the two a file is.
+func unmetafyZsh(b []byte) []byte {
+	i := bytes.IndexByte(b, zshMeta)
+	if i < 0 {
+		return b
+	}
+	out := make([]byte, 0, len(b))
+	out = append(out, b[:i]...)
+	for ; i < len(b); i++ {
+		// A Meta with nothing after it is a truncated file rather than an
+		// escape, so the byte is kept instead of silently dropped.
+		if b[i] == zshMeta && i+1 < len(b) {
+			i++
+			out = append(out, b[i]^32)
+			continue
+		}
+		out = append(out, b[i])
+	}
+	return out
+}
+
+// parseZsh reads ~/.zsh_history. With EXTENDED_HISTORY set, zsh writes a
+// ": <ts>:<elapsed>;" header before each command; without it the line is the
+// command alone and the record gets ts=0.
 func parseZsh(data []byte, host string) []record.Record {
 	var out []record.Record
-	for _, line := range joinContinuations(splitLines(data)) {
+	for _, line := range joinContinuations(splitLines(unmetafyZsh(data))) {
 		rec := record.Record{Host: host, Sh: "zsh"}
 		rest := line
 		if strings.HasPrefix(line, ": ") {

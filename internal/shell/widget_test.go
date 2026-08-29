@@ -35,7 +35,11 @@ func typeIntoZsh(t *testing.T, zdotdir string, keys []string) {
 	// snippet, not the distribution's.
 	cmd := exec.Command(scriptBin, "-qec", "zsh -d -i", "/dev/null")
 	cmd.Dir = zdotdir
-	cmd.Env = append(os.Environ(), "ZDOTDIR="+zdotdir, "HOME="+zdotdir, "TERM=xterm")
+	// HISTFILE is redirected for the same reason as ZDOTDIR, and HOME does not
+	// cover it: it is usually exported as an absolute path, so without this the
+	// keys typed below are saved into the user's real shell history.
+	cmd.Env = append(os.Environ(), "ZDOTDIR="+zdotdir, "HOME="+zdotdir,
+		"HISTFILE="+filepath.Join(zdotdir, "zsh_history"), "TERM=xterm")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -151,6 +155,18 @@ eval "$(endap init zsh)"
 		t.Fatal(err)
 	}
 	return dir, dataDir
+}
+
+func TestTypeIntoZshLeavesTheInheritedHistfileAlone(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this test drives a pty and takes a few seconds")
+	}
+	// setupWidget first: it skips when zsh is missing, and there is no point
+	// standing up the decoy for a run that will not happen.
+	zdotdir, _ := setupWidget(t, "echo unused")
+	check := inheritedHistfile(t)
+	typeIntoZsh(t, zdotdir, []string{guardMarker + "\n", "exit\n"})
+	check()
 }
 
 func shellQuote(s string) string {

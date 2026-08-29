@@ -670,6 +670,44 @@ func TestImportParsers(t *testing.T) {
 			t.Fatalf("a line that only looks like a header was mangled: %q", got[2].Cmd)
 		}
 	})
+	t.Run("zsh metafied bytes", func(t *testing.T) {
+		// zsh writes the history file metafied and nothing in the file says so.
+		// The escape covers NUL and all of 0x83-0xa2, and this string spans the
+		// shapes that come out of that: U+30C3 (e3 83 83) escapes twice,
+		// U+30C8 (e3 83 88) escapes a token-range byte on top of its Meta byte,
+		// and U+30E2 (e3 83 a2) sits on the top of the range.
+		//
+		// metafy is not derived from unmetafyZsh -- it produces, byte for byte,
+		// what zsh itself wrote when asked to save this exact string. That is
+		// what stops the round trip from passing on a rule both halves get
+		// wrong: with the range one byte too narrow the two stop agreeing.
+		metafy := func(s string) []byte {
+			var out []byte
+			for _, b := range []byte(s) {
+				if b == 0 || (b >= zshMeta && b <= 0xa2) {
+					out = append(out, zshMeta, b^32)
+					continue
+				}
+				out = append(out, b)
+			}
+			return out
+		}
+		const want = "mv スクリーンショット.png メモ/"
+		src := filepath.Join(h.dir, "zh-meta")
+		os.WriteFile(src, append(append([]byte(": 1700000200:0;"), metafy(want)...), '\n'), 0o600)
+		got := parseZsh(mustRead(t, src), "imported")
+		if len(got) != 1 {
+			t.Fatalf("got %d records: %+v", len(got), got)
+		}
+		if got[0].Cmd != want {
+			t.Fatalf("metafied command not decoded:\n got %q\nwant %q", got[0].Cmd, want)
+		}
+		// A file truncated in the middle of an escape keeps the trailing byte
+		// rather than dropping it or reading past the end.
+		if got := parseZsh([]byte("echo \x83"), "imported"); len(got) != 1 || got[0].Cmd != "echo \x83" {
+			t.Fatalf("truncated escape: %+v", got)
+		}
+	})
 	t.Run("fish", func(t *testing.T) {
 		src := filepath.Join(h.dir, "fh")
 		os.WriteFile(src, []byte("- cmd: git status\n  when: 1700000300\n  paths:\n    - a\n- cmd: two\\nlines\n  when: 1700000400\n"), 0o600)
