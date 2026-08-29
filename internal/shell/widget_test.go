@@ -157,6 +157,18 @@ eval "$(endap init zsh)"
 	return dir, dataDir
 }
 
+func TestTypeIntoZshLeavesTheInheritedHistfileAlone(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this test drives a pty and takes a few seconds")
+	}
+	// setupWidget first: it skips when zsh is missing, and there is no point
+	// standing up the decoy for a run that will not happen.
+	zdotdir, _ := setupWidget(t, "echo unused")
+	check := inheritedHistfile(t)
+	typeIntoZsh(t, zdotdir, []string{guardMarker + "\n", "exit\n"})
+	check()
+}
+
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
