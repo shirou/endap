@@ -68,6 +68,11 @@ func endap(t *testing.T) string {
 // ZDOTDIR and HOME are redirected on purpose. Without that the user's own
 // ~/.zshrc is read, and its atuin bindings, fzf widgets and preexec hooks end
 // up inside the test.
+//
+// HISTFILE has to be redirected too, and redirecting HOME does not cover it: it
+// is usually exported as an absolute path, so the test shell inherits it along
+// with SAVEHIST and, on exit, writes every command this test types into the
+// user's real shell history -- where a later `endap import` picks them up.
 func runShell(t *testing.T, shell, rc, input string) *shellRun {
 	t.Helper()
 	bin := endap(t)
@@ -101,6 +106,7 @@ func runShell(t *testing.T, shell, rc, input string) *shellRun {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
 		"ZDOTDIR="+dir, "HOME="+dir,
+		"HISTFILE="+filepath.Join(dir, "shell_history"),
 		"PATH="+filepath.Dir(bin)+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"ENDAP_DATA_DIR="+dataDir,
 	)
