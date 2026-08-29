@@ -1,0 +1,90 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # The hook tests drive real shells. Without them installed they skip, and
+      # "it works here" is all the suite can say.
+      - name: install shells and fzf
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh fish fzf util-linux
+          # The Ctrl-R widget tests drive a pty through script(1). Without it
+          # they skip, and the only automated check of the widget disappears
+          # without anything going red.
+          command -v script >/dev/null || { echo "script(1) is missing"; exit 1; }
+          fzf --version
+          bash --version | head -1
+          zsh --version
+          fish --version
+
+      - name: vet
+        run: go vet ./...
+
+      # gofmt -l lists unformatted files and still exits 0, so the output is
+      # what has to be checked, not the status.
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "these files are not gofmt'd:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: test
+        run: go test ./...
+
+      - name: test with the race detector
+        run: go test -race ./...
+
+      # Fuzzing only runs when -fuzz is given; a plain `go test` just replays the
+      # seed corpus. -fuzz takes one target at a time.
+      - name: fuzz
+        run: |
+          go test -run='^$' -fuzz=FuzzDecodeAgainstStdlib -fuzztime=60s ./internal/record
+          go test -run='^$' -fuzz=FuzzRoundTrip -fuzztime=60s ./internal/record
+
+      # Benchmarks do not run by default either. The numbers are recorded, not
+      # asserted: a threshold here would measure the runner, not the code.
+      - name: benchmark
+        run: go test -run='^$' -bench=. -benchtime=3x ./internal/store
+
+      - name: binary size
+        run: |
+          go build -ldflags="-s -w" -o endap .
+          size=$(stat -c%s endap)
+          echo "endap is $size bytes"
+          if [ "$size" -ge 5242880 ]; then
+            echo "the binary is 5MB or larger; the budget is 5MB"
+            exit 1
+          fi
+
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # CGO_ENABLED=0 is the point of the dependency rules: cross-compiling has
+      # to stay a matter of setting GOOS.
+      - run: CGO_ENABLED=0 go build ./...
+      - run: go test ./internal/record/ ./internal/config/ ./internal/rank/ ./internal/store/
