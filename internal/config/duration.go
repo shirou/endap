@@ -10,8 +10,8 @@ import (
 // ParseDuration parses durations of the form "30d", "2y", "12h", "90m".
 //
 // time.ParseDuration is not enough on its own: its unit set stops at h, so the
-// day and year units the config file is written in ("halflife = 30d") are
-// rejected outright. Anything it does understand is still handed to it.
+// day and year units the flags are written in ("--since 30d") are rejected
+// outright. Anything it does understand is still handed to it.
 func ParseDuration(s string) (time.Duration, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {

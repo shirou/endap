@@ -9,12 +9,12 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 )
 
 // Config holds the tunables that shape ranking and recording.
 type Config struct {
-	Halflife     time.Duration
+	// Sort is the default ordering of `endap list`: "recent" or "rank".
+	Sort         string
 	CwdBoost     float64
 	FailPenalty  float64
 	ShortPenalty float64
@@ -37,7 +37,7 @@ func Defaults() *Config {
 	ig, warnings := buildIgnore(nil)
 	return &Config{
 		Critical:     warnings,
-		Halflife:     30 * 24 * time.Hour,
+		Sort:         "recent",
 		CwdBoost:     2.0,
 		FailPenalty:  0.5,
 		ShortPenalty: 0.3,
@@ -109,15 +109,17 @@ func parseInto(cfg *Config, text string, warnings []string) ([]string, []string)
 
 func (c *Config) set(key, value string) error {
 	switch key {
+	case "sort":
+		if value != "recent" && value != "rank" {
+			return fmt.Errorf("sort must be recent or rank")
+		}
+		c.Sort = value
 	case "halflife":
-		d, err := ParseDuration(value)
-		if err != nil {
-			return err
-		}
-		if d <= 0 {
-			return fmt.Errorf("halflife must be positive")
-		}
-		c.Halflife = d
+		// Dropped along with the exponential decay it parameterised: recency
+		// is now four fixed bands. Rejecting the key by name says so, where
+		// the generic unknown-key warning would leave the user believing a
+		// ranking they had tuned was still in effect.
+		return fmt.Errorf("halflife is not supported; recency now uses fixed time bands")
 	case "cwd_boost":
 		return setFloat(&c.CwdBoost, key, value)
 	case "fail_penalty":
@@ -164,7 +166,7 @@ func setFloat(dst *float64, key, value string) error {
 func applyEnv(cfg *Config) ([]string, []string) {
 	var ignores, warnings []string
 	for env, key := range map[string]string{
-		"ENDAP_HALFLIFE":      "halflife",
+		"ENDAP_SORT":          "sort",
 		"ENDAP_CWD_BOOST":     "cwd_boost",
 		"ENDAP_FAIL_PENALTY":  "fail_penalty",
 		"ENDAP_SHORT_PENALTY": "short_penalty",

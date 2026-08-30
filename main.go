@@ -19,7 +19,7 @@ usage: endap <command> [flags]
 
   init <shell>   print the shell integration script (zsh, bash, fish)
   add            record one history entry (called from a shell hook)
-  list           print merged, ranked history for fzf
+  list           print the merged history for fzf, newest first
   export         copy the log to stdout untouched
   doctor         check the installation and the log
   import <src>   read an existing history file (bash, zsh, fish, atuin, endap)

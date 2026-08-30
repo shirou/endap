@@ -60,7 +60,7 @@ func BenchmarkList(b *testing.B) {
 			for b.Loop() {
 				r := rank.New(cfg, "/home/u/src/project3", true, time.Now().UnixMilli())
 				Walk(data, r.Add)
-				if got := len(r.Entries()); got == 0 {
+				if got := len(r.Recent()); got == 0 {
 					b.Fatal("no entries")
 				}
 			}

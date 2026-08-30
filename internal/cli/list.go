@@ -13,16 +13,19 @@ import (
 )
 
 // ListUsage documents the list subcommand.
-const ListUsage = "list [--cwd <path>] [--host <name>] [--session <id>] [--limit <n>] " +
-	"[--since <dur>] [--no-dedupe] [--format cmd|tsv] [--print0=false]"
+const ListUsage = "list [--sort recent|rank] [--cwd <path>] [--host <name>] [--session <id>] " +
+	"[--limit <n>] [--since <dur>] [--no-dedupe] [--format cmd|tsv] [--print0=false]"
 
-// List prints the merged, ranked history.
+// List prints the merged history in the requested order.
 //
 // This is the only hot read path: it runs on every Ctrl-R, which is why the log
 // is parsed by hand rather than through encoding/json.
 func List(env *Env, args []string) int {
 	fs := newFlagSet(env, "list", ListUsage)
-	cwd := fs.String("cwd", "", "boost commands that were run in this directory")
+	// Empty rather than "recent" so that the config file can set the default
+	// and an explicit flag can still override it.
+	sortBy := fs.String("sort", "", "order: recent (newest first) or rank (frecency)")
+	cwd := fs.String("cwd", "", "boost commands that were run in this directory (--sort rank only)")
 	host := fs.String("host", "", "only records from this host")
 	session := fs.String("session", "", "only records from this session")
 	since := fs.String("since", "", "only records newer than this duration, e.g. 7d")
@@ -49,6 +52,13 @@ func List(env *Env, args []string) int {
 	}
 
 	cfg := loadConfig(env)
+	if *sortBy == "" {
+		*sortBy = cfg.Sort
+	}
+	if *sortBy != "recent" && *sortBy != "rank" {
+		env.errf("unknown --sort %q (want recent or rank)", *sortBy)
+		return 2
+	}
 	path, err := historyPath()
 	if err != nil {
 		env.errf("%v", err)
@@ -73,7 +83,12 @@ func List(env *Env, args []string) int {
 		}
 		r.Add(rec)
 	})
-	entries := r.Entries()
+	var entries []rank.Entry
+	if *sortBy == "rank" {
+		entries = r.Ranked()
+	} else {
+		entries = r.Recent()
+	}
 	if *limit > 0 && len(entries) > *limit {
 		entries = entries[:*limit]
 	}

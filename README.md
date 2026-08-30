@@ -11,12 +11,12 @@ machine you were on. endap keeps all of it, in one append-only JSONL file per
 user, and merges the files from several machines into one history.
 
 ```
-$ endap list --cwd "$PWD" | fzf --no-sort --read0 --print0
+$ endap list | fzf --no-sort --read0 --print0
 ```
 
 - One process per command, about 3ms. No daemon, no database, no index.
-- Ranking by frecency, with a directory boost that survives a stray run
-  elsewhere.
+- Newest first, the way Ctrl-R works everywhere else. Frecency is there when
+  you want it, behind `--sort rank`.
 - Multi-line commands survive intact, which is why the log is JSON.
 - Standard library only, no cgo. A stripped binary is under 3MiB.
 
@@ -88,12 +88,11 @@ Press Ctrl-R. Whatever you have already typed becomes the initial query, so it
 behaves the way fzf's and atuin's bindings do.
 
 Candidates are ordered by endap, and fzf runs with `--no-sort` so it filters
-without reordering. That is deliberate. Type `gs` with `git status` (500 runs),
-`gs` (2 runs) and `git stash` (50 runs) in your history, and fzf's match score
-puts the exact match `gs` first — but the command you want is almost certainly
-`git status`. *Which string best matches this input* and *which command do you
-want to run* are different questions. `--fzf-sort` gives fzf the ordering back
-if you disagree.
+without reordering. That is deliberate. Type `gs` with `git status`, `gs` and
+`git stash` in your history, and fzf's match score puts the exact match `gs`
+first, however long ago you last ran it. *Which string best matches this input*
+and *which command do you want to run* are different questions. `--fzf-sort`
+gives fzf the ordering back if you disagree.
 
 ```
 $ endap stats
@@ -108,14 +107,42 @@ hosts                 thinkpad: 41022
                       workstation: 7191
 ```
 
-## Ranking
+## Ordering
+
+Newest first, with one entry per command placed by its most recent run. That is
+what Ctrl-R does in bash, zsh, fish, fzf and atuin, and it is what a history
+tool has to do before it is allowed to be clever.
+
+```sh
+endap list --sort rank
+```
+
+The Ctrl-R widget calls plain `endap list`, so `sort = rank` in the config file
+is what changes the order there. `--sort` on the command line overrides it.
+
+`rank` scores each command as:
 
 ```
-score = log(count + 1) × exp(-λ × ageDays)      λ = ln(2) / halflife
+score = log(count + 1) × recency
 ```
 
 Counting runs logarithmically keeps 500 runs of `ls` from permanently burying
 the one `ffmpeg` invocation you spent ten minutes assembling last week.
+
+`recency` is zoxide's aging curve, moved from directories to commands:
+
+| Last run | Multiplier |
+|---|---|
+| Within the hour | × 4 |
+| Within the day | × 2 |
+| Within the week | × 0.5 |
+| Older | × 0.25 |
+
+Sixteen-fold across a single week, which is where a shell session lives. The
+first implementation decayed exponentially from a 30-day half-life instead; that
+loses 2.3% in a day, which leaves the time term a near-constant next to
+`log(count + 1)` and the ranking as frequency wearing frecency's name. A step
+function is cruder and spends its whole range where the range is needed.
 
 Three corrections apply on top:
 
@@ -125,10 +152,10 @@ Three corrections apply on top:
 | It has ever been run in the current directory | × 2.0 |
 | It is 3 characters or shorter | × 0.3 |
 
-The directory boost counts *how many* runs happened in the current directory,
-not just where the last one was. If it only looked at the last directory, then
-running `make test` once in `/tmp` would cancel the boost for the fifty times
-you ran it in your project.
+The directory boost needs `--cwd`, which the shell integration always passes,
+and counts *how many* runs happened there rather than just where the last one
+was. If it only looked at the last directory, then running `make test` once in
+`/tmp` would cancel the boost for the fifty times you ran it in your project.
 
 ## Importing an existing history
 
@@ -239,7 +266,7 @@ line, and the value runs to the end of the line — both because `ignore = /^#/`
 and patterns containing `=` have to work.
 
 ```
-halflife     = 30d
+sort         = recent
 cwd_boost    = 2.0
 fail_penalty = 0.5
 short_penalty = 0.3
@@ -251,7 +278,7 @@ ignore = /^(ls|cd|pwd)$/
 ignore = /AWS_SECRET/
 ```
 
-Every setting can be overridden from the environment: `ENDAP_HALFLIFE`,
+Every setting can be overridden from the environment: `ENDAP_SORT`,
 `ENDAP_CWD_BOOST`, `ENDAP_FAIL_PENALTY`, `ENDAP_SHORT_PENALTY`,
 `ENDAP_SHORT_LEN`, `ENDAP_IGNORE`, plus `ENDAP_DATA_DIR`, `ENDAP_CONFIG` and
 `ENDAP_HOST`.
@@ -392,7 +419,7 @@ setup is exactly where you left it and works the moment you take endap out.
 ```
 endap init <shell>     print the shell integration script
 endap add              record one entry (called from a shell hook)
-endap list             print merged, ranked history for fzf
+endap list             print the merged history for fzf, newest first
 endap export           copy the log to stdout untouched
 endap doctor           check the installation and the log
 endap import <source>  read an existing history file
