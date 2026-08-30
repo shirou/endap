@@ -36,6 +36,9 @@ func List(env *Env, args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	if rejectPositional(env, fs, args) {
+		return 2
+	}
 	if *format != "cmd" && *format != "tsv" {
 		env.errf("unknown --format %q (want cmd or tsv)", *format)
 		return 2

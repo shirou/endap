@@ -323,6 +323,41 @@ func TestListSortComesFromTheConfig(t *testing.T) {
 	}
 }
 
+func TestAStrayArgumentIsRejected(t *testing.T) {
+	// "--print0 false" is how a boolean flag gets written by anyone who has not
+	// read the usage line. flag.Parse leaves --print0 on, drops the word, and
+	// stops, so --limit is never parsed either: the command runs and does the
+	// opposite of what was asked.
+	h := newHarness(t)
+	h.run(Add, "--cmd", "git status")
+
+	if code := h.run(List, "--print0", "false", "--limit", "1"); code != 2 {
+		t.Fatalf("list exited %d, want 2", code)
+	}
+	if got := h.stderr.String(); !strings.Contains(got, "--print0=false") {
+		t.Fatalf("the message does not say how to write it: %q", got)
+	}
+	if h.stdout.Len() != 0 {
+		t.Fatal("the history was printed anyway")
+	}
+
+	// A stray word that is not a boolean value is still not an argument.
+	if code := h.run(Stats, "nonsense"); code != 2 {
+		t.Fatalf("stats exited %d, want 2", code)
+	}
+	if got := h.stderr.String(); !strings.Contains(got, "nonsense") {
+		t.Fatalf("the message does not name the argument: %q", got)
+	}
+
+	// The spelling that works has to keep working.
+	if code := h.run(List, "--print0=false", "--limit", "1"); code != 0 {
+		t.Fatalf("list exited %d, want 0", code)
+	}
+	if got := h.stdout.String(); got != "git status\n" {
+		t.Fatalf("output = %q", got)
+	}
+}
+
 func TestListFilters(t *testing.T) {
 	h := newHarness(t)
 	h.run(Add, "--cmd", "on host a", "--sess", "sess-a")

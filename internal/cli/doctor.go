@@ -41,6 +41,9 @@ func Doctor(env *Env, args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	if rejectPositional(env, fs, args) {
+		return 2
+	}
 
 	var out []finding
 	add := func(level, format string, a ...any) {

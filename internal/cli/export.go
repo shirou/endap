@@ -17,6 +17,9 @@ func Export(env *Env, args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	if rejectPositional(env, fs, args) {
+		return 2
+	}
 	path, err := historyPath()
 	if err != nil {
 		env.errf("%v", err)

@@ -29,6 +29,9 @@ func Compact(env *Env, args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	if rejectPositional(env, fs, args) {
+		return 2
+	}
 	cfg := loadConfig(env)
 	path, err := historyPath()
 	if err != nil {
