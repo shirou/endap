@@ -59,7 +59,7 @@ func TestLoadMissingFileIsNotAnError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Halflife != 30*24*time.Hour || cfg.CwdBoost != 2.0 {
+	if cfg.Sort != "recent" || cfg.CwdBoost != 2.0 {
 		t.Fatalf("defaults not applied: %+v", cfg)
 	}
 }
@@ -68,12 +68,12 @@ func TestParserSplitsOnTheFirstEqualsOnly(t *testing.T) {
 	// The pattern below contains "=". Splitting on every "=" would truncate it
 	// to "/PASSWORD" and the ignore would silently stop matching what the user
 	// wrote.
-	cfg, err := Load(write(t, "ignore = /PASSWORD=[a-z]+/\nhalflife = 7d\n"))
+	cfg, err := Load(write(t, "ignore = /PASSWORD=[a-z]+/\ncwd_boost = 7.0\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Halflife != 7*24*time.Hour {
-		t.Fatalf("halflife = %v", cfg.Halflife)
+	if cfg.CwdBoost != 7.0 {
+		t.Fatalf("cwd_boost = %v", cfg.CwdBoost)
 	}
 	if !cfg.Ignore.Match("export PASSWORD=hunter") {
 		t.Fatal("the pattern with an = in it did not match")
@@ -205,6 +205,20 @@ func TestNonFiniteTunablesAreRejected(t *testing.T) {
 	}
 }
 
+func TestHalflifeIsRejectedByName(t *testing.T) {
+	// Anyone who tuned the old exponential decay has this key in their config.
+	// The generic unknown-key warning would leave them believing it still
+	// shapes the ranking.
+	cfg, err := Load(write(t, "halflife = 7d\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(cfg.Warnings, " ")
+	if !strings.Contains(joined, "halflife") || !strings.Contains(joined, "time bands") {
+		t.Fatalf("no warning explaining halflife: %v", cfg.Warnings)
+	}
+}
+
 func TestRetentionIsRejectedWithAnExplanation(t *testing.T) {
 	cfg, err := Load(write(t, "retention = 365d\n"))
 	if err != nil {
@@ -217,13 +231,13 @@ func TestRetentionIsRejectedWithAnExplanation(t *testing.T) {
 }
 
 func TestEnvOverrides(t *testing.T) {
-	t.Setenv("ENDAP_HALFLIFE", "7d")
+	t.Setenv("ENDAP_SORT", "rank")
 	t.Setenv("ENDAP_CWD_BOOST", "3.5")
-	cfg, err := Load(write(t, "halflife = 30d\ncwd_boost = 2.0\n"))
+	cfg, err := Load(write(t, "sort = recent\ncwd_boost = 2.0\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Halflife != 7*24*time.Hour || cfg.CwdBoost != 3.5 {
+	if cfg.Sort != "rank" || cfg.CwdBoost != 3.5 {
 		t.Fatalf("environment did not override the file: %+v", cfg)
 	}
 }
@@ -250,16 +264,16 @@ func TestEnvOverridesEveryTunable(t *testing.T) {
 
 func TestBadEnvValueWarnsAndKeepsTheDefault(t *testing.T) {
 	t.Setenv("ENDAP_SHORT_LEN", "not-a-number")
-	t.Setenv("ENDAP_HALFLIFE", "nonsense")
+	t.Setenv("ENDAP_SORT", "nonsense")
 	cfg, err := Load(write(t, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ShortLen != 3 || cfg.Halflife != 30*24*time.Hour {
+	if cfg.ShortLen != 3 || cfg.Sort != "recent" {
 		t.Fatalf("a bad environment value overwrote the default: %+v", cfg)
 	}
 	joined := strings.Join(cfg.Warnings, " ")
-	for _, want := range []string{"ENDAP_SHORT_LEN", "ENDAP_HALFLIFE"} {
+	for _, want := range []string{"ENDAP_SHORT_LEN", "ENDAP_SORT"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("no warning naming %s: %v", want, cfg.Warnings)
 		}

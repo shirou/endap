@@ -1,6 +1,7 @@
 package rank
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -34,11 +35,11 @@ func TestFrequencyIsLogarithmic(t *testing.T) {
 	}
 	ffmpeg := rec("ffmpeg -i in.mkv -c:v libx264 -crf 18 out.mp4", "/tmp", 7, 0, now)
 	r.Add(&ffmpeg)
-	got := order(r.Entries())
+	got := order(r.Ranked())
 	if got[0] != "ls -la" {
 		t.Fatalf("order = %v", got)
 	}
-	e := r.Entries()
+	e := r.Ranked()
 	ratio := e[0].Score / e[1].Score
 	// Counted linearly the ratio would be in the hundreds. The logarithm is
 	// what keeps a one-off within reach of a command run all day.
@@ -62,7 +63,7 @@ func TestCwdBoostSurvivesOneRunElsewhere(t *testing.T) {
 	other := rec("make lint", "/project", 1, 0, now)
 	r.Add(&other)
 
-	entries := r.Entries()
+	entries := r.Ranked()
 	var maketest *Entry
 	for i := range entries {
 		if entries[i].Cmd == "make test" {
@@ -92,7 +93,7 @@ func TestFailPenaltyAndShortPenalty(t *testing.T) {
 	bad := rec("command-b", "", 0, 1, now)
 	r.Add(&ok)
 	r.Add(&bad)
-	e := r.Entries()
+	e := r.Ranked()
 	if e[0].Cmd != "command-a" {
 		t.Fatalf("the failed command was not penalised: %v", order(e))
 	}
@@ -105,7 +106,7 @@ func TestFailPenaltyAndShortPenalty(t *testing.T) {
 	long := rec("ls -la", "", 0, 0, now)
 	r.Add(&short)
 	r.Add(&long)
-	e = r.Entries()
+	e = r.Ranked()
 	if e[0].Cmd != "ls -la" {
 		t.Fatalf("the short command was not penalised: %v", order(e))
 	}
@@ -131,8 +132,8 @@ func TestShortPenaltyCountsCharacters(t *testing.T) {
 		y := rec("a command that is not short", "", 0, 0, now)
 		baseline.Add(&y)
 
-		got := r.Entries()[0].Score
-		want := baseline.Entries()[0].Score
+		got := r.Ranked()[0].Score
+		want := baseline.Ranked()[0].Score
 		penalised := got < want*0.9
 		if penalised != c.short {
 			t.Errorf("%q: penalised=%v, want %v (score %.4f vs %.4f)", c.cmd, penalised, c.short, got, want)
@@ -140,20 +141,92 @@ func TestShortPenaltyCountsCharacters(t *testing.T) {
 	}
 }
 
-func TestRecencyDecay(t *testing.T) {
+func TestRecencyBands(t *testing.T) {
+	// zoxide's curve: x4 inside the hour, x2 inside the day, /2 inside the
+	// week, /4 beyond it. What the bands buy over a half-life is the spread
+	// they put across a single week, so that is what is checked last.
 	now := time.Now().UnixMilli()
-	cfg := config.Defaults() // halflife 30d
-	r := New(cfg, "", true, now)
-	fresh := rec("fresh command", "", 0, 0, now)
-	old := rec("older command", "", 30, 0, now)
-	r.Add(&fresh)
-	r.Add(&old)
-	e := r.Entries()
-	if e[0].Cmd != "fresh command" {
-		t.Fatalf("order = %v", order(e))
+	const hour = int64(60 * 60 * 1000)
+	cfg := config.Defaults()
+	score := func(ageMillis int64) float64 {
+		r := New(cfg, "", true, now)
+		x := record.Record{V: record.Version, Cmd: "a command that is not short", TS: now - ageMillis, Host: "h"}
+		x.SetExit(0)
+		r.Add(&x)
+		return r.Ranked()[0].Score
 	}
-	if got := e[1].Score / e[0].Score; got < 0.49 || got > 0.51 {
-		t.Fatalf("one half-life decayed to %.3f, want 0.5", got)
+	// One run, no boost and no penalty, so the score is the multiplier itself.
+	base := math.Log(2)
+	for _, c := range []struct {
+		name string
+		age  int64
+		want float64
+	}{
+		{"inside the hour", 30 * 60 * 1000, 4},
+		{"inside the day", 12 * hour, 2},
+		{"inside the week", 3 * 24 * hour, 0.5},
+		{"older than a week", 30 * 24 * hour, 0.25},
+	} {
+		if got := score(c.age) / base; math.Abs(got-c.want) > 1e-9 {
+			t.Errorf("%s: multiplier %.4f, want %.4f", c.name, got, c.want)
+		}
+	}
+	if spread := score(0) / score(8*24*hour); math.Abs(spread-16) > 1e-9 {
+		t.Errorf("the week spans %.2fx, want 16x", spread)
+	}
+}
+
+// TestRecentIgnoresHowOftenACommandWasRun pins the default ordering: the one
+// Ctrl-R has in bash, zsh, fish, fzf and atuin. Frecency is what --sort rank
+// is for, and the two must not agree here or the test proves nothing.
+func TestRecentIgnoresHowOftenACommandWasRun(t *testing.T) {
+	now := time.Now().UnixMilli()
+	r := New(config.Defaults(), "/project", true, now)
+	for range 500 {
+		x := rec("make test", "/project", 2, 0, now)
+		r.Add(&x)
+	}
+	fresh := rec("git push origin HEAD", "/project", 0, 0, now)
+	r.Add(&fresh)
+
+	if got := order(r.Recent()); got[0] != "git push origin HEAD" {
+		t.Fatalf("Recent order = %v", got)
+	}
+	if got := order(r.Ranked()); got[0] != "make test" {
+		t.Fatalf("Ranked order = %v", got)
+	}
+}
+
+func TestRecentKeepsOneEntryPerCommand(t *testing.T) {
+	// atuin's dedup, which endap already had: one row per command, placed by
+	// its most recent run rather than its first.
+	now := time.Now().UnixMilli()
+	r := New(config.Defaults(), "", true, now)
+	for _, c := range []struct {
+		cmd string
+		age int64
+	}{{"cargo build", 3}, {"vim README.md", 2}, {"cargo build", 1}} {
+		x := rec(c.cmd, "", c.age, 0, now)
+		r.Add(&x)
+	}
+	got := order(r.Recent())
+	if len(got) != 2 || got[0] != "cargo build" || got[1] != "vim README.md" {
+		t.Fatalf("order = %v", got)
+	}
+}
+
+func TestRecentKeepsFileOrderWhenTimestampsTie(t *testing.T) {
+	// A zsh history without EXTENDED_HISTORY imports as ts=0 throughout. The
+	// file order is the only chronology those records have left.
+	now := time.Now().UnixMilli()
+	r := New(config.Defaults(), "", true, now)
+	for _, cmd := range []string{"first command", "second command", "third command"} {
+		x := record.Record{V: record.Version, Cmd: cmd, TS: 0, Host: "imported"}
+		r.Add(&x)
+	}
+	got := order(r.Recent())
+	if got[0] != "first command" || got[2] != "third command" {
+		t.Fatalf("order = %v", got)
 	}
 }
 
@@ -167,7 +240,7 @@ func TestFutureTimestampsDoNotWin(t *testing.T) {
 	present := rec("present", "", 0, 0, now)
 	r.Add(&future)
 	r.Add(&present)
-	e := r.Entries()
+	e := r.Ranked()
 	if e[0].Score != e[1].Score {
 		t.Fatalf("a future record scored differently: %+v", e)
 	}
@@ -180,7 +253,7 @@ func TestNoDedupeKeepsEveryRecord(t *testing.T) {
 		x := rec("ls", "/tmp", 0, 0, now)
 		r.Add(&x)
 	}
-	if got := len(r.Entries()); got != 3 {
+	if got := len(r.Ranked()); got != 3 {
 		t.Fatalf("got %d entries, want 3", got)
 	}
 }
@@ -194,7 +267,7 @@ func TestLastFieldsFollowTheNewestRecord(t *testing.T) {
 	older := rec("cmd", "/old", 5, 0, now)
 	r.Add(&newer)
 	r.Add(&older)
-	e := r.Entries()[0]
+	e := r.Ranked()[0]
 	if e.LastCwd != "/new" || e.LastExit != 1 || e.Count != 2 {
 		t.Fatalf("got %+v", e)
 	}

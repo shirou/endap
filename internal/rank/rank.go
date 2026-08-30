@@ -1,4 +1,5 @@
-// Package rank merges duplicate commands and orders them by frecency.
+// Package rank merges duplicate commands and orders them, newest first by
+// default and by frecency on request.
 package rank
 
 import (
@@ -94,15 +95,28 @@ func (r *Ranker) Add(rec *record.Record) {
 	}
 }
 
-// Entries scores everything added so far and returns it in ranking order.
+// Recent returns the entries newest first: the ordering Ctrl-R has in bash,
+// zsh, fish, fzf and atuin, and the one endap uses unless asked for Ranked.
+//
+// Scores are still filled in because the tsv format prints them, but they do
+// not affect the order. Ties keep the order the records arrived in, which
+// leaves imported records that carry no timestamp of their own -- they all
+// share ts=0 -- in the order the imported file had them.
 //
 // It sorts in place and invalidates the index, so no Add may follow it.
-func (r *Ranker) Entries() []Entry {
-	halflifeDays := r.cfg.Halflife.Hours() / 24
-	lambda := math.Ln2 / halflifeDays
-	for i := range r.list {
-		r.list[i].Score = r.score(&r.list[i], lambda)
-	}
+func (r *Ranker) Recent() []Entry {
+	r.scoreAll()
+	sort.SliceStable(r.list, func(a, b int) bool {
+		return r.list[a].LastTs > r.list[b].LastTs
+	})
+	return r.list
+}
+
+// Ranked scores everything added so far and returns it in frecency order.
+//
+// It sorts in place and invalidates the index, so no Add may follow it.
+func (r *Ranker) Ranked() []Entry {
+	r.scoreAll()
 	sort.SliceStable(r.list, func(a, b int) bool {
 		x, y := &r.list[a], &r.list[b]
 		if x.Score != y.Score {
@@ -113,15 +127,47 @@ func (r *Ranker) Entries() []Entry {
 	return r.list
 }
 
-// score is log(count+1) * exp(-lambda * ageDays) with the three corrections.
-func (r *Ranker) score(e *Entry, lambda float64) float64 {
-	ageDays := float64(r.now-e.LastTs) / float64(24*60*60*1000)
-	if ageDays < 0 {
-		// A record from the future (clock skew across hosts) is treated as new,
-		// not as arbitrarily valuable.
-		ageDays = 0
+func (r *Ranker) scoreAll() {
+	for i := range r.list {
+		r.list[i].Score = r.score(&r.list[i])
 	}
-	s := math.Log(float64(e.Count)+1) * math.Exp(-lambda*ageDays)
+}
+
+// Millisecond spans of the recency bands.
+const (
+	hourMillis = int64(60 * 60 * 1000)
+	dayMillis  = 24 * hourMillis
+	weekMillis = 7 * dayMillis
+)
+
+// recencyMultiplier is zoxide's aging curve, moved from directories to
+// commands: four bands spanning a factor of sixteen inside a single week.
+//
+// It replaced exponential decay with a half-life. A half-life long enough to
+// keep a month-old command reachable -- 30 days was the first value -- decays
+// by 2.3% in a day, which leaves the time term a near-constant next to
+// log(count+1) and the ranking as frequency wearing frecency's name. A step
+// function is cruder, but it spends the whole spread inside the week a shell
+// session actually lives in.
+func recencyMultiplier(ageMillis int64) float64 {
+	switch {
+	// A record from the future -- clocks disagree across synced hosts -- has a
+	// negative age and lands in this band, which makes it new rather than
+	// arbitrarily valuable.
+	case ageMillis < hourMillis:
+		return 4
+	case ageMillis < dayMillis:
+		return 2
+	case ageMillis < weekMillis:
+		return 0.5
+	default:
+		return 0.25
+	}
+}
+
+// score is log(count+1) weighted by recency, with the three corrections.
+func (r *Ranker) score(e *Entry) float64 {
+	s := math.Log(float64(e.Count)+1) * recencyMultiplier(r.now-e.LastTs)
 	if e.HasExit && e.LastExit != 0 {
 		s *= r.cfg.FailPenalty
 	}

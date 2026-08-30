@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/shirou/endap/internal/config"
 	"github.com/shirou/endap/internal/store"
@@ -83,6 +84,33 @@ func parseArgs(fs *flag.FlagSet, args []string) ([]string, error) {
 		positional = append(positional, rest[0])
 		args = rest[1:]
 	}
+}
+
+// rejectPositional reports a leftover word, for the subcommands that take no
+// positional arguments at all.
+//
+// flag.Parse stops at the first non-flag word and hands the rest back, so a
+// subcommand that never reads fs.Args() accepts "endap list --print0 false" and
+// then does the opposite of what it was asked: --print0 is a boolean and stays
+// on, the stray word is dropped, and every flag written after it is never
+// parsed. Silently is the wrong way to get that wrong.
+func rejectPositional(env *Env, fs *flag.FlagSet, args []string) bool {
+	rest := fs.Args()
+	if len(rest) == 0 {
+		return false
+	}
+	// Parse consumed everything ahead of rest, so the token in front of the
+	// stray word is the flag it was meant for. Naming it is most of the help:
+	// a boolean flag is the only kind that can be written this way and still
+	// parse.
+	if i := len(args) - len(rest) - 1; i > -1 && args[i] != "--" && strings.HasPrefix(args[i], "-") {
+		if _, err := strconv.ParseBool(rest[0]); err == nil {
+			env.errf("unexpected argument %q; write %s=%s, a boolean flag takes no separate value", rest[0], args[i], rest[0])
+			return true
+		}
+	}
+	env.errf("unexpected argument %q", rest[0])
+	return true
 }
 
 // loadConfig reads the config file, or returns the defaults when it cannot.

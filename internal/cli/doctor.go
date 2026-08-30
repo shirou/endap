@@ -41,6 +41,9 @@ func Doctor(env *Env, args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	if rejectPositional(env, fs, args) {
+		return 2
+	}
 
 	var out []finding
 	add := func(level, format string, a ...any) {
@@ -72,7 +75,7 @@ func Doctor(env *Env, args []string) int {
 	for _, w := range cfg.Critical {
 		add("error", "config: %s", w)
 	}
-	add("ok", "halflife %s, cwd_boost %g, fail_penalty %g", cfg.Halflife, cfg.CwdBoost, cfg.FailPenalty)
+	add("ok", "sort %s, cwd_boost %g, fail_penalty %g", cfg.Sort, cfg.CwdBoost, cfg.FailPenalty)
 	add("ok", "active ignore patterns (%d):", cfg.Ignore.Len())
 	for _, p := range cfg.Ignore.Sources() {
 		add("ok", "    %s", p)

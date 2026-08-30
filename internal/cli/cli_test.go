@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/shirou/endap/internal/record"
 	"github.com/shirou/endap/internal/store"
@@ -246,10 +248,15 @@ func TestAddRejectsAMalformedSessionId(t *testing.T) {
 
 func TestListOutput(t *testing.T) {
 	h := newHarness(t)
-	h.run(Add, "--cmd", "git status", "--cwd", "/project", "--exit", "0")
-	h.run(Add, "--cmd", "git status", "--cwd", "/project", "--exit", "0")
-	h.run(Add, "--cmd", "echo a\nb", "--cwd", "/other", "--exit", "0")
-	h.run(Add, "--cmd", "make test", "--cwd", "/other", "--exit", "1")
+	// Explicit timestamps: four adds in a row can land in the same
+	// millisecond, and the default ordering is the one thing here that reads
+	// them.
+	now := time.Now().UnixMilli()
+	at := func(secondsAgo int64) string { return strconv.FormatInt(now-secondsAgo*1000, 10) }
+	h.run(Add, "--cmd", "git status", "--cwd", "/project", "--exit", "0", "--ts", at(40))
+	h.run(Add, "--cmd", "git status", "--cwd", "/project", "--exit", "0", "--ts", at(30))
+	h.run(Add, "--cmd", "echo a\nb", "--cwd", "/other", "--exit", "0", "--ts", at(20))
+	h.run(Add, "--cmd", "make test", "--cwd", "/other", "--exit", "1", "--ts", at(10))
 
 	code := h.run(List, "--cwd", "/project")
 	if code != 0 {
@@ -260,11 +267,22 @@ func TestListOutput(t *testing.T) {
 		t.Fatal("--print0 is the default and was not applied")
 	}
 	fields := strings.Split(strings.TrimSuffix(out, "\x00"), "\x00")
-	if fields[0] != "git status" {
-		t.Fatalf("the boosted, most-run command is not first: %q", fields)
+	// Newest first by default, even with --cwd naming the directory the
+	// twice-run command was boosted for.
+	if fields[0] != "make test" {
+		t.Fatalf("the default order is not newest first: %q", fields)
 	}
 	if !strings.Contains(out, "echo a\nb") {
 		t.Fatal("the multi-line command was lost")
+	}
+
+	h.run(List, "--sort", "rank", "--cwd", "/project", "--print0=false")
+	if got, _, _ := strings.Cut(h.stdout.String(), "\n"); got != "git status" {
+		t.Fatalf("--sort rank did not put the boosted, most-run command first: %q", got)
+	}
+
+	if code := h.run(List, "--sort", "nonsense"); code != 2 {
+		t.Fatalf("an unknown --sort exited %d, want 2", code)
 	}
 
 	h.run(List, "--print0=false")
@@ -272,7 +290,7 @@ func TestListOutput(t *testing.T) {
 		t.Fatal("--print0=false still emitted NULs")
 	}
 
-	h.run(List, "--format", "tsv", "--print0=false", "--limit", "1")
+	h.run(List, "--sort", "rank", "--format", "tsv", "--print0=false", "--limit", "1")
 	line := strings.TrimSuffix(h.stdout.String(), "\n")
 	cols := strings.Split(line, "\t")
 	if len(cols) != 5 {
@@ -280,6 +298,63 @@ func TestListOutput(t *testing.T) {
 	}
 	if cols[1] != "2" {
 		t.Fatalf("count column = %q", cols[1])
+	}
+}
+
+func TestListSortComesFromTheConfig(t *testing.T) {
+	// The widget calls plain `endap list`, so the config file is the only way
+	// to opt a shell into the ranking.
+	h := newHarness(t)
+	now := time.Now().UnixMilli()
+	at := func(secondsAgo int64) string { return strconv.FormatInt(now-secondsAgo*1000, 10) }
+	h.run(Add, "--cmd", "old but frequent", "--ts", at(40))
+	h.run(Add, "--cmd", "old but frequent", "--ts", at(30))
+	h.run(Add, "--cmd", "new and rare", "--ts", at(10))
+
+	h.writeConfig("sort = rank\n")
+	h.run(List, "--print0=false")
+	if got, _, _ := strings.Cut(h.stdout.String(), "\n"); got != "old but frequent" {
+		t.Fatalf("sort = rank in the config was ignored: %q", got)
+	}
+	// An explicit flag still wins over it.
+	h.run(List, "--sort", "recent", "--print0=false")
+	if got, _, _ := strings.Cut(h.stdout.String(), "\n"); got != "new and rare" {
+		t.Fatalf("--sort recent did not override the config: %q", got)
+	}
+}
+
+func TestAStrayArgumentIsRejected(t *testing.T) {
+	// "--print0 false" is how a boolean flag gets written by anyone who has not
+	// read the usage line. flag.Parse leaves --print0 on, drops the word, and
+	// stops, so --limit is never parsed either: the command runs and does the
+	// opposite of what was asked.
+	h := newHarness(t)
+	h.run(Add, "--cmd", "git status")
+
+	if code := h.run(List, "--print0", "false", "--limit", "1"); code != 2 {
+		t.Fatalf("list exited %d, want 2", code)
+	}
+	if got := h.stderr.String(); !strings.Contains(got, "--print0=false") {
+		t.Fatalf("the message does not say how to write it: %q", got)
+	}
+	if h.stdout.Len() != 0 {
+		t.Fatal("the history was printed anyway")
+	}
+
+	// A stray word that is not a boolean value is still not an argument.
+	if code := h.run(Stats, "nonsense"); code != 2 {
+		t.Fatalf("stats exited %d, want 2", code)
+	}
+	if got := h.stderr.String(); !strings.Contains(got, "nonsense") {
+		t.Fatalf("the message does not name the argument: %q", got)
+	}
+
+	// The spelling that works has to keep working.
+	if code := h.run(List, "--print0=false", "--limit", "1"); code != 0 {
+		t.Fatalf("list exited %d, want 0", code)
+	}
+	if got := h.stdout.String(); got != "git status\n" {
+		t.Fatalf("output = %q", got)
 	}
 }
 
