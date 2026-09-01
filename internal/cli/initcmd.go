@@ -8,14 +8,20 @@ import (
 )
 
 // InitUsage documents the init subcommand.
-const InitUsage = "init <zsh|bash|fish> [--preview] [--fzf-sort] [--no-bindkey] [--keep-histcontrol]"
+const InitUsage = "init <zsh|bash|fish> [--preview] [--no-fzf-sort] [--no-bindkey] [--keep-histcontrol]"
 
 // Init prints the shell integration script.
 func Init(env *Env, args []string) int {
 	fs := newFlagSet(env, "init", InitUsage)
 	var opt shell.Options
 	fs.BoolVar(&opt.Preview, "preview", false, "show count, last run and directory in an fzf preview pane (needs fzf 0.60+)")
-	fs.BoolVar(&opt.FzfSort, "fzf-sort", false, "let fzf order the candidates with --scheme=history instead of keeping endap's order")
+	fs.BoolVar(&opt.NoFzfSort, "no-fzf-sort", false, "keep endap's order with --no-sort instead of letting fzf's --scheme=history rank the matches")
+	// --fzf-sort used to select --scheme=history, which is now the default. It
+	// stays accepted rather than becoming an error: the line that carries it is
+	// eval'd from a shell rc, and an unknown flag there prints nothing, which
+	// leaves the shell with no recording and no Ctrl-R at all.
+	var fzfSortCompat bool
+	fs.BoolVar(&fzfSortCompat, "fzf-sort", false, "deprecated: --scheme=history is the default now, so this does nothing")
 	fs.BoolVar(&opt.NoBindkey, "no-bindkey", false, "define the widget but leave Ctrl-R bound to whatever has it")
 	fs.BoolVar(&opt.KeepHistcontrol, "keep-histcontrol", false, "bash: do not warn at startup about HISTCONTROL settings that hide commands from endap")
 	pos, err := parseArgs(fs, args)

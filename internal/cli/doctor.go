@@ -19,7 +19,8 @@ const DoctorUsage = "doctor [--compact-threshold <n>]"
 // fzf version requirements (D10). The options were checked against fzf's
 // changelog: --no-sort / --read0 / --print0 predate 0.33, --scheme=history
 // arrived in 0.33.0, multi-line display of --read0 input in 0.53.0, and
-// --accept-nth in 0.60.0.
+// --accept-nth in 0.60.0. The default widget passes --scheme=history, which is
+// what makes 0.33 the floor rather than a recommendation.
 const (
 	fzfRequired    = "0.33"
 	fzfRecommended = "0.53"
@@ -203,7 +204,7 @@ func checkFzf(add func(string, string, ...any)) {
 	got := [2]int{atoi(m[1]), atoi(m[2])}
 	switch {
 	case less(got, parseMinor(fzfRequired)):
-		add("error", "fzf %s is older than the required %s", version, fzfRequired)
+		add("error", "fzf %s is older than the required %s, the version --scheme=history arrived in; the widget passes it, and `endap init <shell> --no-fzf-sort` builds one that does not", version, fzfRequired)
 	case less(got, parseMinor(fzfRecommended)):
 		add("warn", "fzf %s is older than %s, so multi-line commands are shown squashed onto one line", version, fzfRecommended)
 	case less(got, parseMinor(fzfPreview)):

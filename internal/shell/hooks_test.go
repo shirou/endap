@@ -609,8 +609,8 @@ func TestNoPlaceholderSurvives(t *testing.T) {
 	leftover := regexp.MustCompile(`@[A-Z_]+@`)
 	for _, sh := range []string{"zsh", "bash", "fish"} {
 		for _, opts := range [][]string{
-			{}, {"--preview"}, {"--fzf-sort"}, {"--no-bindkey"}, {"--keep-histcontrol"},
-			{"--preview", "--fzf-sort", "--no-bindkey", "--keep-histcontrol"},
+			{}, {"--preview"}, {"--no-fzf-sort"}, {"--no-bindkey"}, {"--keep-histcontrol"},
+			{"--preview", "--no-fzf-sort", "--no-bindkey", "--keep-histcontrol"},
 		} {
 			name := sh + " " + strings.Join(opts, " ")
 			script, err := exec.Command(bin, append([]string{"init", sh}, opts...)...).Output()
@@ -624,12 +624,46 @@ func TestNoPlaceholderSurvives(t *testing.T) {
 	}
 }
 
+// TestSortFlag pins which ordering the widget asks fzf for. It is the one
+// choice in the script a user meets on the first Ctrl-R and cannot see the
+// cause of: fzf matches a subsequence, so a short query also hits commands that
+// share no word with it, and only --scheme=history ranks the real matches above
+// those while leaving equally scored ones in endap's newest-first order.
+func TestSortFlag(t *testing.T) {
+	bin := endap(t)
+	cases := []struct {
+		opts       []string
+		want, deny string
+	}{
+		{nil, "--scheme=history", "--no-sort"},
+		// The flag that used to select --scheme=history still parses, so an
+		// existing rc line keeps producing a working widget.
+		{[]string{"--fzf-sort"}, "--scheme=history", "--no-sort"},
+		{[]string{"--no-fzf-sort"}, "--no-sort", "--scheme=history"},
+	}
+	for _, sh := range []string{"zsh", "bash", "fish"} {
+		for _, tc := range cases {
+			name := sh + " " + strings.Join(tc.opts, " ")
+			script, err := exec.Command(bin, append([]string{"init", sh}, tc.opts...)...).Output()
+			if err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			if !strings.Contains(string(script), tc.want) {
+				t.Errorf("%s: no %s in the script", name, tc.want)
+			}
+			if strings.Contains(string(script), tc.deny) {
+				t.Errorf("%s: %s is in the script as well", name, tc.deny)
+			}
+		}
+	}
+}
+
 func TestGeneratedScriptsParse(t *testing.T) {
 	bin := endap(t)
 	for _, sh := range []string{"zsh", "bash"} {
 		for _, opts := range [][]string{
-			{}, {"--preview"}, {"--fzf-sort"}, {"--no-bindkey"},
-			{"--preview", "--fzf-sort", "--no-bindkey", "--keep-histcontrol"},
+			{}, {"--preview"}, {"--no-fzf-sort"}, {"--no-bindkey"},
+			{"--preview", "--no-fzf-sort", "--no-bindkey", "--keep-histcontrol"},
 		} {
 			name := sh + " " + strings.Join(opts, " ")
 			t.Run(name, func(t *testing.T) {
