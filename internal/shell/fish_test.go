@@ -144,7 +144,7 @@ func TestFishScriptParses(t *testing.T) {
 		t.Skip("fish is not installed")
 	}
 	bin := endap(t)
-	for _, opts := range [][]string{{}, {"--preview"}, {"--fzf-sort"}, {"--no-bindkey"}} {
+	for _, opts := range [][]string{{}, {"--preview"}, {"--no-fzf-sort"}, {"--no-bindkey"}} {
 		t.Run(strings.Join(append([]string{"fish"}, opts...), " "), func(t *testing.T) {
 			script, err := exec.Command(bin, append([]string{"init", "fish"}, opts...)...).Output()
 			if err != nil {

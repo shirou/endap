@@ -23,9 +23,9 @@ type Options struct {
 	// fzf 0.60 or newer: an older fzf exits with an unknown-option error, which
 	// takes Ctrl-R down with it.
 	Preview bool
-	// FzfSort hands the ordering back to fzf's history scheme instead of
-	// pinning it with --no-sort.
-	FzfSort bool
+	// NoFzfSort pins the candidate order with --no-sort instead of letting
+	// fzf's history scheme rank the matches.
+	NoFzfSort bool
 	// NoBindkey leaves Ctrl-R alone and only defines the widget.
 	NoBindkey bool
 	// KeepHistcontrol silences the bash HISTCONTROL warning at shell startup.
@@ -58,12 +58,22 @@ func Script(name string, opt Options) (string, error) {
 		return "", fmt.Errorf("unsupported shell %q (want one of %s)", name, strings.Join(Shells(), ", "))
 	}
 
-	sortOpt := "--no-sort"
-	if opt.FzfSort {
-		// --scheme=history is the history preset: it drops the path-oriented
-		// bonuses and keeps the input order among equally scored candidates.
-		// It is not the same as --no-sort -- a clearly better match still wins.
-		sortOpt = "--scheme=history"
+	// --scheme=history is fzf's command-history preset: it drops the
+	// path-oriented bonuses and keeps the input order -- endap's, newest first
+	// -- among equally scored candidates.
+	//
+	// It is the default because fzf matches a subsequence rather than a
+	// substring, so a short query pulls in candidates that share no word with
+	// it: "ping" also hits "scp admin@host:...tlog" through its p, i, n and g.
+	// Under --no-sort those land wherever their last use puts them, which
+	// leaves the handful of real matches scattered through them and reads as
+	// no order at all.
+	sortOpt := "--scheme=history"
+	if opt.NoFzfSort {
+		// --no-sort leaves endap's order untouched: fzf filters and never
+		// reorders. The cost is that an exact match never floats to the top,
+		// however precisely the query names it.
+		sortOpt = "--no-sort"
 	}
 	listFormat, fzfView := "", ""
 	if opt.Preview {

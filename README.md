@@ -11,7 +11,7 @@ machine you were on. endap keeps all of it, in one append-only JSONL file per
 user, and merges the files from several machines into one history.
 
 ```
-$ endap list | fzf --no-sort --read0 --print0
+$ endap list | fzf --scheme=history --read0 --print0
 ```
 
 - One process per command, about 3ms. No daemon, no database, no index.
@@ -65,9 +65,13 @@ echo 'source ~/.endap.zsh' >> ~/.zshrc
 | Flag | What it does |
 |---|---|
 | `--preview` | Show run count, last use and directory in an fzf preview pane. **Needs fzf 0.60+** |
-| `--fzf-sort` | Let fzf order the candidates (`--scheme=history`) instead of endap |
+| `--no-fzf-sort` | Keep endap's order untouched (`--no-sort`) instead of letting fzf rank the matches |
 | `--no-bindkey` | Define the widget but leave Ctrl-R bound to whatever already has it |
 | `--keep-histcontrol` | bash only: stop warning at startup about `HISTCONTROL` settings that hide commands |
+
+`--fzf-sort` used to be how you asked for `--scheme=history`. That is the
+default now, so the flag still parses and does nothing: a startup line that
+still carries it keeps working rather than breaking the shell it is eval'd in.
 
 The output is static text. endap never probes fzf's version or feature set at
 shell startup: that would cost a process on every shell, or make the behaviour
@@ -87,12 +91,22 @@ form that fzf and atuin actually use.
 Press Ctrl-R. Whatever you have already typed becomes the initial query, so it
 behaves the way fzf's and atuin's bindings do.
 
-Candidates are ordered by endap, and fzf runs with `--no-sort` so it filters
-without reordering. That is deliberate. Type `gs` with `git status`, `gs` and
+Candidates leave endap newest first, and fzf runs with `--scheme=history`: the
+best matches rise to the top, and candidates fzf scores equally keep the order
+they arrived in. Both halves are load-bearing.
+
+fzf matches a subsequence, not a substring. `ping` therefore also matches
+`scp admin@host:...ardupilot.tlog logs` through its p, i, n and g, and on a
+2000-command history 216 candidates matched that way while only 29 contained the
+word. Ranking is what puts the real `ping` lines on top of those; keeping the
+input order among equals is what puts the most recent one first.
+
+`--no-fzf-sort` pins the order instead, with fzf's `--no-sort`, so fzf filters
+and never reorders. What that buys: type `gs` with `git status`, `gs` and
 `git stash` in your history, and fzf's match score puts the exact match `gs`
-first, however long ago you last ran it. *Which string best matches this input*
-and *which command do you want to run* are different questions. `--fzf-sort`
-gives fzf the ordering back if you disagree.
+first, however long ago you last ran it, while `--no-sort` leaves `git status`
+where its recency put it. What it costs is the paragraph above -- a short query
+scatters the matches you want through the ones you don't.
 
 ```
 $ endap stats
@@ -363,7 +377,7 @@ across the whole operation.
 
 | Version | What you get |
 |---|---|
-| **0.33** | Required. Below this, Ctrl-R does not work |
+| **0.33** | Required. The widget passes `--scheme=history`, which arrived here; below this fzf exits with an unknown-option error and takes Ctrl-R with it. `--no-fzf-sort` builds a widget that does without it |
 | 0.53 | Recommended. Below this, multi-line commands are squashed onto one line |
 | 0.60 | Required for `--preview`. Below this, `endap init <shell> --preview` makes fzf exit with an unknown-option error and takes Ctrl-R down with it |
 
